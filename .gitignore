@@ -1,0 +1,108 @@
+# Composer
+/vendor/
+composer.lock
+
+# Laravel specific
+/storage/logs
+/storage/framework
+/storage/app
+/bootstrap/cache/*.php
+/public/storage
+/public/hot
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.backup
+.env.production
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Node.js (if using frontend assets)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Testing
+/coverage/
+/coverage-html/
+/.phpunit.cache/
+coverage.xml
+coverage.txt
+phpunit.xml
+/tests/results/
+
+# Build artifacts
+/build/
+/dist/
+*.log
+
+# Cache directories
+.cache/
+.tmp/
+.temp/
+
+# Package development
+*.tar.gz
+*.zip
+
+# PHPStorm
+/.idea/
+/nbproject/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# PHP CS Fixer
+.php_cs.cache
+.php-cs-fixer.cache
+
+# Psalm
+psalm.xml
+
+# Local development
+.local/
+local.php
+local.json
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Temporary files
+*.tmp
+*.temp
+.github/copilot-instructions.md

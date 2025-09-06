@@ -1,0 +1,71 @@
+{
+    "name": "haianibrahim/laravel-tiktok-scraper",
+    "description": "Laravel package for TikTok video scraping with clean API integration for Laravel 12.x.x",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Haian Ibrahim",
+            "email": "contact@haian.me",
+            "homepage": "https://github.com/haianibrahim"
+        }
+    ],
+    "keywords": [
+        "laravel",
+        "tiktok",
+        "scraper",
+        "video",
+        "social-media",
+        "api",
+        "laravel-package"
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/contracts": "^11.0|^12.0",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0",
+        "illuminate/cache": "^11.0|^12.0",
+        "guzzlehttp/guzzle": "^7.8"
+    },
+    "require-dev": {
+        "laravel/framework": "^11.0|^12.0",
+        "orchestra/testbench": "^9.0|^10.0",
+        "phpunit/phpunit": "^10.0|^11.0",
+        "mockery/mockery": "^1.6",
+        "phpstan/phpstan": "^1.10"
+    },
+    "autoload": {
+        "psr-4": {
+            "Hki98\\LaravelTikTokScraper\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Hki98\\LaravelTikTokScraper\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage",
+        "analyse": "vendor/bin/phpstan analyse",
+        "format": "vendor/bin/php-cs-fixer fix --allow-risky=yes"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Hki98\\LaravelTikTokScraper\\TikTokScraperServiceProvider"
+            ],
+            "aliases": {
+                "TikTokScraper": "Hki98\\LaravelTikTokScraper\\Facades\\TikTokScraper"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
