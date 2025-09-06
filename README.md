@@ -1,6 +1,6 @@
 # Laravel TikTok Scraper
 
-A Laravel package that provides an easy way to scrape TikTok video data directly into your Laravel application. This package wraps the [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) with Laravel-specific features including caching, rate limiting, events, and comprehensive API endpoints.
+A Laravel package that provides an easy way to scrape TikTok video data directly into your Laravel application. This package implements the [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) with Laravel-specific features including caching, rate limiting, events, and comprehensive API endpoints.
 
 ## Features
 
