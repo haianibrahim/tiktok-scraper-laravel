@@ -21,7 +21,7 @@ A Laravel package that provides an easy way to scrape TikTok video data directly
 Install the package via Composer:
 
 ```bash
-composer require haianibrahim/laravel-tiktok-scraper
+composer require haianibrahim/tiktok-scraper-laravel
 ```
 
 ### Laravel Auto-Discovery
