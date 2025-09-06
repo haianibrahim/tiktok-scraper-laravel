@@ -1,5 +1,5 @@
 {
-    "name": "haianibrahim/laravel-tiktok-scraper",
+    "name": "haianibrahim/tiktok-scraper-laravel",
     "description": "Laravel package for TikTok video scraping with clean API integration for Laravel 12.x.x",
     "type": "library",
     "license": "MIT",
