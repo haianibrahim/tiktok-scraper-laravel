@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `laravel-tiktok-scraper` will be documented in this file.
+All notable changes to `tiktok-scraper-laravel` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **BREAKING CHANGE**: Changed PHP namespace from `HaiIbrahim\LaravelTikTokScraper` to `Hki98\LaravelTikTokScraper`
 - Updated all PHP class namespaces and imports throughout the package
-- Maintained package name as `haianibrahim/laravel-tiktok-scraper` for Composer installation
+- Maintained package name as `haianibrahim/tiktok-scraper-laravel` for Composer installation
 
 ### Migration Notes
 If updating from a previous version:
-1. Installation command remains the same: `composer require haianibrahim/laravel-tiktok-scraper`
+1. Installation command remains the same: `composer require haianibrahim/tiktok-scraper-laravel`
 2. Update any direct class imports in your code from `HaiIbrahim\LaravelTikTokScraper\*` to `Hki98\LaravelTikTokScraper\*`
 3. Re-publish configuration files: `php artisan vendor:publish --provider="Hki98\LaravelTikTokScraper\TikTokScraperServiceProvider" --tag="config" --force`
 
