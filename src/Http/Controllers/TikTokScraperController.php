@@ -65,6 +65,50 @@ class TikTokScraperController extends Controller
     }
 
     /**
+     * Scrape a TikTok user profile.
+     */
+    public function scrapeUser(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'user' => 'required|string',
+            'use_cache' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $user = $request->input('user');
+        $useCache = $request->boolean('use_cache', true);
+
+        try {
+            if (!$this->scraper->isValidUserInput($user)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid TikTok username or profile URL',
+                ], 400);
+            }
+
+            $userInfo = $this->scraper->scrapeUser($user, $useCache);
+
+            return response()->json([
+                'success' => true,
+                'data' => $userInfo->toArray(),
+            ]);
+        } catch (TikTokScraperException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error_code' => $e->getCode(),
+            ], 500);
+        }
+    }
+
+    /**
      * Scrape multiple TikTok URLs.
      */
     public function bulkScrape(Request $request): JsonResponse

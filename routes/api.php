@@ -11,6 +11,10 @@ Route::group([
     Route::post('/scrape', [TikTokScraperController::class, 'scrape'])
         ->name('tiktok-scraper.scrape');
     
+    // User profile scraping endpoint
+    Route::post('/user', [TikTokScraperController::class, 'scrapeUser'])
+        ->name('tiktok-scraper.user');
+    
     // Bulk scraping endpoint
     Route::post('/bulk-scrape', [TikTokScraperController::class, 'bulkScrape'])
         ->name('tiktok-scraper.bulk-scrape');

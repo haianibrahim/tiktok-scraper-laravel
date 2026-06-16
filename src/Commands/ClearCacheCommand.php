@@ -36,23 +36,12 @@ class ClearCacheCommand extends Command
                 return Command::FAILURE;
             }
 
-            $cleared = $scraper->clearCache($url);
-            
-            if ($cleared) {
-                $this->info("✅ Cache cleared for URL: {$url}");
-            } else {
-                $this->warn("⚠️  No cache found for URL: {$url}");
-            }
+            $scraper->clearUrlCache($url);
+            $this->info("✅ Cache cleared for URL: {$url}");
         } else {
             if ($this->confirm('Are you sure you want to clear ALL TikTok scraper cache?')) {
-                $cleared = $scraper->clearCache();
-                
-                if ($cleared) {
-                    $this->info('✅ All TikTok scraper cache cleared successfully!');
-                } else {
-                    $this->error('❌ Failed to clear cache');
-                    return Command::FAILURE;
-                }
+                $scraper->clearCache();
+                $this->info('✅ All TikTok scraper cache cleared successfully!');
             } else {
                 $this->info('Cache clearing cancelled.');
                 return Command::SUCCESS;

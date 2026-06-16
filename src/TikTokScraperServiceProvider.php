@@ -14,15 +14,6 @@ use Illuminate\Support\ServiceProvider;
 class TikTokScraperServiceProvider extends ServiceProvider
 {
     /**
-     * All of the container bindings that should be registered.
-     *
-     * @var array
-     */
-    public array $bindings = [
-        TikTokScraperInterface::class => TikTokScraperService::class,
-    ];
-
-    /**
      * Register any application services.
      */
     public function register(): void
@@ -55,7 +46,9 @@ class TikTokScraperServiceProvider extends ServiceProvider
     protected function registerHttpClient(): void
     {
         $this->app->singleton('tiktok-scraper.http-client', function (Application $app) {
-            $config = $app['config']['tiktok-scraper.http'];
+            $config = $app['config']['tiktok-scraper.http']
+                ?? $app['config']['tiktok-scraper.http_client']
+                ?? [];
 
             return new Client([
                 'timeout' => $config['timeout'] ?? 30,
@@ -77,7 +70,7 @@ class TikTokScraperServiceProvider extends ServiceProvider
         $this->app->singleton(TikTokScraperInterface::class, function (Application $app) {
             return new TikTokScraperService(
                 httpClient: $app['tiktok-scraper.http-client'],
-                cache: $app[CacheManager::class],
+                cacheManager: $app[CacheManager::class],
                 config: $app['config']['tiktok-scraper']
             );
         });

@@ -4,18 +4,18 @@ declare(strict_types=1);
 
 namespace Hki98\LaravelTikTokScraper\Events;
 
-use Hki98\LaravelTikTokScraper\Data\VideoDetails;
+use Hki98\LaravelTikTokScraper\Data\UserInfo;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class VideoScraped
+class UserScraped
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public function __construct(
-        public readonly string $url,
-        public readonly VideoDetails $videoDetails
+        public readonly string $input,
+        public readonly UserInfo $userInfo
     ) {
     }
 }

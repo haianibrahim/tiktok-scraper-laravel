@@ -1,10 +1,13 @@
 # Laravel TikTok Scraper
 
-A Laravel package that provides an easy way to scrape TikTok video data directly into your Laravel application. This package implements the [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) with Laravel-specific features including caching, rate limiting, events, and comprehensive API endpoints.
+A Laravel package that provides an easy way to scrape TikTok video, photo post, and user profile data directly into your Laravel application. This package wraps the [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) native package (v2.1+) and adds Laravel-specific features including caching, rate limiting, events, and comprehensive API endpoints.
 
 ## Features
 
-- 🚀 **Laravel 12.x.x Compatible** - Built for the latest Laravel version
+- 🚀 **Laravel 11 & 12 Compatible** - Built for modern Laravel versions
+- 🎬 **Video Scraping** - Extract metadata and engagement stats from video URLs
+- 🖼️ **Photo Post Scraping** - Full support for TikTok photo (slideshow) posts
+- 👤 **User Profile Scraping** - Fetch profile details from a username or profile URL
 - 📦 **Easy Integration** - Simple service provider and facade
 - 🔧 **Configurable** - Comprehensive configuration options
 - 💾 **Caching Support** - Built-in caching with multiple drivers
@@ -91,9 +94,22 @@ use Hki98\LaravelTikTokScraper\Facades\TikTokScraper;
 // Scrape a single video
 $videoDetails = TikTokScraper::scrape('https://www.tiktok.com/@username/video/1234567890');
 
-echo $videoDetails->title;
+echo $videoDetails->description;
 echo $videoDetails->username;
 echo $videoDetails->views;
+
+// Scrape a photo (slideshow) post - same method, same VideoDetails object
+$photoPost = TikTokScraper::scrape('https://www.tiktok.com/@username/photo/1234567890');
+
+echo $photoPost->userNickname;
+echo $photoPost->likes;
+
+// Scrape a user profile (accepts a bare username, @username, or profile URL)
+$user = TikTokScraper::scrapeUser('scout2015');
+
+echo $user->nickname;
+echo $user->getFormattedFollowers(); // e.g. "9M"
+echo $user->verified ? 'Verified' : 'Not verified';
 
 // Scrape multiple videos
 $videos = TikTokScraper::scrapeMultiple([
@@ -101,9 +117,13 @@ $videos = TikTokScraper::scrapeMultiple([
     'https://www.tiktok.com/@user2/video/0987654321',
 ]);
 
-// Validate URL
+// Validate input before scraping
 if (TikTokScraper::isValidTikTokUrl($url)) {
     $videoDetails = TikTokScraper::scrape($url);
+}
+
+if (TikTokScraper::isValidUserInput($username)) {
+    $user = TikTokScraper::scrapeUser($username);
 }
 
 // Cache management
@@ -138,44 +158,80 @@ class VideoController extends Controller
 
 ### Video Details Object
 
-The `VideoDetails` object contains comprehensive video information:
+The `VideoDetails` object (returned for both video and photo posts) contains the following information:
 
 ```php
 $videoDetails = TikTokScraper::scrape($url);
 
-// Basic video information
+// Basic information
 echo $videoDetails->videoId;
-echo $videoDetails->title;
 echo $videoDetails->description;
-echo $videoDetails->url;
+echo $videoDetails->canonicalUrl;
+echo $videoDetails->thumbnail;
 
 // User information
 echo $videoDetails->username;
-echo $videoDetails->displayName;
-echo $videoDetails->avatarUrl;
+echo $videoDetails->userNickname;
+echo $videoDetails->userId;
+echo $videoDetails->getUserProfileUrl(); // https://www.tiktok.com/@username
 
 // Statistics
 echo $videoDetails->views;
 echo $videoDetails->likes;
 echo $videoDetails->comments;
 echo $videoDetails->shares;
+echo $videoDetails->favorites;
 
-// Media information
-echo $videoDetails->videoUrl;
-echo $videoDetails->coverUrl;
-echo $videoDetails->duration;
-
-// Music information
-echo $videoDetails->musicTitle;
-echo $videoDetails->musicAuthor;
-
-// Calculated metrics
-echo $videoDetails->getEngagementRate(); // Percentage
-echo $videoDetails->getTotalEngagement(); // Total likes + comments + shares
+// Calculated metrics & helpers
+echo $videoDetails->getEngagementRate();   // Percentage of views
+echo $videoDetails->getTotalEngagement();  // likes + comments + shares + favorites
+echo $videoDetails->getFormattedViews();   // e.g. "1.5M"
+echo $videoDetails->getFormattedLikes();   // e.g. "35.1K"
+echo $videoDetails->getEmbedUrl();
 
 // Convert to array/JSON
 $array = $videoDetails->toArray();
 $json = $videoDetails->toJson();
+```
+
+### User Info Object
+
+The `UserInfo` object is returned by `scrapeUser()`:
+
+```php
+$user = TikTokScraper::scrapeUser('scout2015');
+
+// Identity
+echo $user->userId;
+echo $user->secUid;
+echo $user->username;
+echo $user->nickname;
+echo $user->signature;
+echo $user->region;
+
+// Avatars
+echo $user->avatarThumb;
+echo $user->avatarMedium;
+echo $user->avatarLarger;
+
+// Flags
+echo $user->verified ? 'verified' : 'not verified';
+echo $user->privateAccount ? 'private' : 'public';
+
+// Counts
+echo $user->followerCount;
+echo $user->followingCount;
+echo $user->heartCount;
+echo $user->videoCount;
+
+// Helpers
+echo $user->getProfileUrl();        // https://www.tiktok.com/@username
+echo $user->getFormattedFollowers(); // e.g. "9M"
+echo $user->getFormattedHearts();    // e.g. "108.2M"
+
+// Convert to array/JSON
+$array = $user->toArray();
+$json = $user->toJson();
 ```
 
 ## Artisan Commands
@@ -243,6 +299,20 @@ Content-Type: application/json
 }
 ```
 
+### Scrape User Profile
+
+```http
+POST /api/tiktok-scraper/user
+Content-Type: application/json
+
+{
+    "user": "scout2015",
+    "use_cache": true
+}
+```
+
+The `user` field accepts a bare username, an `@username`, or a full profile URL.
+
 ### Bulk Scrape
 
 ```http
@@ -306,6 +376,20 @@ Event::listen(VideoScraped::class, function (VideoScraped $event) {
 });
 ```
 
+### UserScraped Event
+
+```php
+use Hki98\LaravelTikTokScraper\Events\UserScraped;
+
+Event::listen(UserScraped::class, function (UserScraped $event) {
+    Log::info('User scraped successfully', [
+        'input' => $event->input,
+        'user_id' => $event->userInfo->userId,
+        'username' => $event->userInfo->username,
+    ]);
+});
+```
+
 ### ScrapingFailed Event
 
 ```php
@@ -327,7 +411,6 @@ use Hki98\LaravelTikTokScraper\Events\RateLimitHit;
 Event::listen(RateLimitHit::class, function (RateLimitHit $event) {
     Log::warning('Rate limit hit', [
         'url' => $event->url,
-        'retry_after' => $event->retryAfter,
     ]);
 });
 ```
@@ -340,20 +423,22 @@ The package provides specific exceptions for different error scenarios:
 use Hki98\LaravelTikTokScraper\Exceptions\{
     TikTokScraperException,
     InvalidUrlException,
-    HttpException,
+    HttpRequestException,
+    EmptyResponseException,
     ParseException,
-    RateLimitException,
-    CacheException
+    RateLimitException
 };
 
 try {
     $videoDetails = TikTokScraper::scrape($url);
 } catch (InvalidUrlException $e) {
-    // Handle invalid URL
+    // Handle invalid URL or user input
 } catch (RateLimitException $e) {
     // Handle rate limiting
-} catch (HttpException $e) {
+} catch (HttpRequestException $e) {
     // Handle HTTP errors
+} catch (EmptyResponseException $e) {
+    // Handle empty responses
 } catch (ParseException $e) {
     // Handle parsing errors
 } catch (TikTokScraperException $e) {
@@ -380,6 +465,7 @@ composer test-coverage
 - PHP 8.2 or higher
 - Laravel 11.0 or 12.0
 - GuzzleHTTP 7.8 or higher
+- [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) 2.1 or higher (installed automatically)
 
 ## Contributing
 

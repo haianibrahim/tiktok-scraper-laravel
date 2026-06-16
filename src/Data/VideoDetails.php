@@ -138,6 +138,16 @@ final class VideoDetails implements Arrayable, Jsonable, JsonSerializable
     }
 
     /**
+     * Get the total engagement (likes + comments + shares).
+     *
+     * @return int
+     */
+    public function getTotalEngagement(): int
+    {
+        return $this->likes + $this->comments + $this->shares;
+    }
+
+    /**
      * Get engagement rate as a percentage.
      *
      * @return float

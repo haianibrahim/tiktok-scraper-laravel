@@ -5,18 +5,25 @@ declare(strict_types=1);
 namespace Hki98\LaravelTikTokScraper\Services;
 
 use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\GuzzleException;
 use Hki98\LaravelTikTokScraper\Contracts\TikTokScraperInterface;
+use Hki98\LaravelTikTokScraper\Data\UserInfo;
 use Hki98\LaravelTikTokScraper\Data\VideoDetails;
-use Hki98\LaravelTikTokScraper\Events\VideoScraped;
-use Hki98\LaravelTikTokScraper\Events\ScrapingFailed;
 use Hki98\LaravelTikTokScraper\Events\RateLimitHit;
-use Hki98\LaravelTikTokScraper\Exceptions\TikTokScraperException;
-use Hki98\LaravelTikTokScraper\Exceptions\InvalidUrlException;
-use Hki98\LaravelTikTokScraper\Exceptions\HttpRequestException;
+use Hki98\LaravelTikTokScraper\Events\ScrapingFailed;
+use Hki98\LaravelTikTokScraper\Events\UserScraped;
+use Hki98\LaravelTikTokScraper\Events\VideoScraped;
 use Hki98\LaravelTikTokScraper\Exceptions\EmptyResponseException;
+use Hki98\LaravelTikTokScraper\Exceptions\HttpRequestException;
+use Hki98\LaravelTikTokScraper\Exceptions\InvalidUrlException;
 use Hki98\LaravelTikTokScraper\Exceptions\ParseException;
 use Hki98\LaravelTikTokScraper\Exceptions\RateLimitException;
+use Hki98\LaravelTikTokScraper\Exceptions\TikTokScraperException;
+use Hki98\TikTok\Exception\EmptyResponseException as NativeEmptyResponseException;
+use Hki98\TikTok\Exception\HttpRequestException as NativeHttpRequestException;
+use Hki98\TikTok\Exception\InvalidUrlException as NativeInvalidUrlException;
+use Hki98\TikTok\Exception\ParseException as NativeParseException;
+use Hki98\TikTok\Exception\TikTokScraperException as NativeTikTokScraperException;
+use Hki98\TikTok\TikTokScraper as NativeScraper;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Facades\Event;
@@ -25,10 +32,9 @@ use Illuminate\Support\Facades\RateLimiter;
 
 class TikTokScraperService implements TikTokScraperInterface
 {
-    private const REHYDRATION_SCRIPT_ID = '__UNIVERSAL_DATA_FOR_REHYDRATION__';
-
     private CacheRepository $cache;
     private array $config;
+    private NativeScraper $scraper;
     private array $statistics = [
         'total_requests' => 0,
         'successful_scrapes' => 0,
@@ -44,6 +50,7 @@ class TikTokScraperService implements TikTokScraperInterface
     ) {
         $this->config = $config;
         $this->cache = $cacheManager->store($config['cache']['store'] ?? null);
+        $this->scraper = new NativeScraper($this->httpClient);
     }
 
     /**
@@ -53,63 +60,104 @@ class TikTokScraperService implements TikTokScraperInterface
     {
         $this->statistics['total_requests']++;
 
-        // Validate URL
         if (!$this->isValidTikTokUrl($url)) {
             $this->statistics['failed_scrapes']++;
             throw new InvalidUrlException("Invalid TikTok URL: {$url}");
         }
 
-        // Check rate limit
-        if ($this->isRateLimited()) {
-            $this->statistics['rate_limit_hits']++;
-            $this->dispatchEvent(new RateLimitHit($url));
-            throw new RateLimitException('Rate limit exceeded. Please try again later.');
-        }
+        $this->guardRateLimit($url);
 
-        // Try cache first
-        if ($useCache && $this->config['cache']['enabled']) {
+        if ($useCache && $this->cacheEnabled()) {
             $cached = $this->getCachedDetails($url);
-            if ($cached) {
+            if ($cached !== null) {
                 $this->statistics['cache_hits']++;
                 return $cached;
             }
         }
 
         try {
-            // Scrape video details
-            $videoDetails = $this->doScrape($url);
-            
-            // Cache the result
-            if ($this->config['cache']['enabled']) {
-                $this->cacheVideoDetails($url, $videoDetails);
+            $native = $this->scraper->scrape($url);
+            $details = VideoDetails::fromArray($native->toArray());
+
+            if ($this->cacheEnabled()) {
+                $this->cache->put($this->getCacheKey($url), $details->toArray(), $this->cacheTtl());
             }
 
-            // Dispatch success event
-            $this->dispatchEvent(new VideoScraped($url, $videoDetails));
-            
-            // Update statistics
+            $this->dispatchEvent(new VideoScraped($url, $details));
             $this->statistics['successful_scrapes']++;
-            
-            // Log successful scrape
             $this->log('info', 'Video scraped successfully', [
                 'url' => $url,
-                'video_id' => $videoDetails->videoId,
-                'username' => $videoDetails->username,
+                'video_id' => $details->videoId,
+                'username' => $details->username,
             ]);
 
-            return $videoDetails;
-
-        } catch (TikTokScraperException $e) {
+            return $details;
+        } catch (NativeTikTokScraperException $e) {
             $this->statistics['failed_scrapes']++;
-            $this->dispatchEvent(new ScrapingFailed($url, $e));
-            
+            $mapped = $this->mapNativeException($e);
+            $this->dispatchEvent(new ScrapingFailed($url, $mapped));
             $this->log('error', 'Scraping failed', [
                 'url' => $url,
-                'error' => $e->getMessage(),
-                'exception' => get_class($e),
+                'error' => $mapped->getMessage(),
+                'exception' => get_class($mapped),
             ]);
 
-            throw $e;
+            throw $mapped;
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function scrapeUser(string $usernameOrUrl, bool $useCache = true): UserInfo
+    {
+        $this->statistics['total_requests']++;
+
+        if (!$this->isValidUserInput($usernameOrUrl)) {
+            $this->statistics['failed_scrapes']++;
+            throw new InvalidUrlException("Invalid TikTok username or profile URL: {$usernameOrUrl}");
+        }
+
+        $this->guardRateLimit($usernameOrUrl);
+
+        $cacheKey = $this->getCacheKey('user:' . $usernameOrUrl);
+
+        if ($useCache && $this->cacheEnabled()) {
+            $cached = $this->cache->get($cacheKey);
+            if (is_array($cached)) {
+                $this->statistics['cache_hits']++;
+                return UserInfo::fromArray($cached);
+            }
+        }
+
+        try {
+            $native = $this->scraper->scrapeUser($usernameOrUrl);
+            $info = UserInfo::fromArray($native->toArray());
+
+            if ($this->cacheEnabled()) {
+                $this->cache->put($cacheKey, $info->toArray(), $this->cacheTtl());
+            }
+
+            $this->dispatchEvent(new UserScraped($usernameOrUrl, $info));
+            $this->statistics['successful_scrapes']++;
+            $this->log('info', 'User profile scraped successfully', [
+                'input' => $usernameOrUrl,
+                'user_id' => $info->userId,
+                'username' => $info->username,
+            ]);
+
+            return $info;
+        } catch (NativeTikTokScraperException $e) {
+            $this->statistics['failed_scrapes']++;
+            $mapped = $this->mapNativeException($e);
+            $this->dispatchEvent(new ScrapingFailed($usernameOrUrl, $mapped));
+            $this->log('error', 'User scraping failed', [
+                'input' => $usernameOrUrl,
+                'error' => $mapped->getMessage(),
+                'exception' => get_class($mapped),
+            ]);
+
+            throw $mapped;
         }
     }
 
@@ -119,12 +167,12 @@ class TikTokScraperService implements TikTokScraperInterface
     public function scrapeMultiple(array $urls, bool $useCache = true): array
     {
         $results = [];
-        
+
         foreach ($urls as $url) {
             try {
                 $results[] = $this->scrape($url, $useCache);
             } catch (TikTokScraperException $e) {
-                // Continue with other URLs even if one fails
+                // Continue with other URLs even if one fails.
                 continue;
             }
         }
@@ -138,10 +186,17 @@ class TikTokScraperService implements TikTokScraperInterface
     public function isValidTikTokUrl(string $url): bool
     {
         $patterns = [
-            '/^https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|m\.tiktok\.com)\/.*$/i',
+            // Video posts
             '/^https?:\/\/(www\.)?tiktok\.com\/@[\w.-]+\/video\/\d+\??.*$/i',
+            // Photo posts
+            '/^https?:\/\/(www\.)?tiktok\.com\/@[\w.-]+\/photo\/\d+\??.*$/i',
+            // User profiles
+            '/^https?:\/\/(www\.)?tiktok\.com\/@[\w.-]+\/?$/i',
+            // Short URLs
             '/^https?:\/\/vm\.tiktok\.com\/[\w]+\/?$/i',
             '/^https?:\/\/m\.tiktok\.com\/v\/\d+\.html\??.*$/i',
+            // Generic tiktok.com fallback
+            '/^https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|m\.tiktok\.com)\/.+$/i',
         ];
 
         foreach ($patterns as $pattern) {
@@ -154,11 +209,67 @@ class TikTokScraperService implements TikTokScraperInterface
     }
 
     /**
+     * Determine whether the given value is a valid user profile input:
+     * a bare username, "@username", or a full profile URL.
+     */
+    public function isValidUserInput(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return false;
+        }
+
+        if (preg_match('/^https?:\/\//i', $value)) {
+            return (bool) preg_match('/^https?:\/\/(www\.)?tiktok\.com\/@[\w.-]+\/?$/i', $value);
+        }
+
+        $username = ltrim($value, '@');
+
+        return (bool) preg_match('/^[A-Za-z0-9._]{1,24}$/', $username);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getCachedDetails(string $url): ?VideoDetails
+    {
+        if (!$this->cacheEnabled()) {
+            return null;
+        }
+
+        $cached = $this->cache->get($this->getCacheKey($url));
+
+        if (is_array($cached)) {
+            return VideoDetails::fromArray($cached);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get cached user details if available.
+     */
+    public function getCachedUserDetails(string $usernameOrUrl): ?UserInfo
+    {
+        if (!$this->cacheEnabled()) {
+            return null;
+        }
+
+        $cached = $this->cache->get($this->getCacheKey('user:' . $usernameOrUrl));
+
+        if (is_array($cached)) {
+            return UserInfo::fromArray($cached);
+        }
+
+        return null;
+    }
+
+    /**
      * {@inheritdoc}
      */
     public function clearCache(): void
     {
-        if ($this->config['cache']['enabled']) {
+        if ($this->cacheEnabled()) {
             $this->cache->flush();
         }
     }
@@ -168,9 +279,9 @@ class TikTokScraperService implements TikTokScraperInterface
      */
     public function clearUrlCache(string $url): void
     {
-        if ($this->config['cache']['enabled']) {
-            $cacheKey = $this->getCacheKey($url);
-            $this->cache->forget($cacheKey);
+        if ($this->cacheEnabled()) {
+            $this->cache->forget($this->getCacheKey($url));
+            $this->cache->forget($this->getCacheKey('user:' . $url));
         }
     }
 
@@ -179,199 +290,116 @@ class TikTokScraperService implements TikTokScraperInterface
      */
     public function hasCachedResult(string $url): bool
     {
-        if (!$this->config['cache']['enabled']) {
+        if (!$this->cacheEnabled()) {
             return false;
         }
 
-        $cacheKey = $this->getCacheKey($url);
-        return $this->cache->has($cacheKey);
+        return $this->cache->has($this->getCacheKey($url))
+            || $this->cache->has($this->getCacheKey('user:' . $url));
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getCachedDetails(string $url): ?VideoDetails
+    public function getStatistics(): array
     {
-        if (!$this->config['cache']['enabled']) {
-            return null;
-        }
+        $total = $this->statistics['total_requests'];
 
-        $cacheKey = $this->getCacheKey($url);
-        $cached = $this->cache->get($cacheKey);
-
-        if ($cached && is_array($cached)) {
-            return VideoDetails::fromArray($cached);
-        }
-
-        return null;
+        return array_merge($this->statistics, [
+            'success_rate' => $total > 0
+                ? round(($this->statistics['successful_scrapes'] / $total) * 100, 2)
+                : 0.0,
+            'failure_rate' => $total > 0
+                ? round(($this->statistics['failed_scrapes'] / $total) * 100, 2)
+                : 0.0,
+            'cache_efficiency' => $total > 0
+                ? round(($this->statistics['cache_hits'] / $total) * 100, 2)
+                : 0.0,
+        ]);
     }
 
     /**
-     * Perform the actual scraping.
+     * Throw if requests are currently rate limited; otherwise record a hit.
      */
-    private function doScrape(string $url): VideoDetails
+    private function guardRateLimit(string $context): void
     {
-        try {
-            $response = $this->httpClient->get($url, [
-                'headers' => $this->config['http_client']['headers'] ?? [],
-                'timeout' => $this->config['http_client']['timeout'] ?? 30,
-                'connect_timeout' => $this->config['http_client']['connect_timeout'] ?? 10,
-            ]);
-
-            $html = $response->getBody()->getContents();
-
-            if (empty($html)) {
-                throw new EmptyResponseException('Empty response body from TikTok.');
-            }
-
-            return $this->parseVideoDetails($html, $url);
-
-        } catch (GuzzleException $e) {
-            throw new HttpRequestException('Network error fetching page: ' . $e->getMessage(), 0, $e);
-        }
-    }
-
-    /**
-     * Parse video details from HTML.
-     */
-    private function parseVideoDetails(string $html, string $url): VideoDetails
-    {
-        // Find the script tag containing video data
-        $pattern = '/<script[^>]*id="' . self::REHYDRATION_SCRIPT_ID . '"[^>]*>(.*?)<\/script>/s';
-        if (!preg_match($pattern, $html, $matches)) {
-            throw new ParseException('Unable to locate embedded data on the page.');
-        }
-
-        $jsonData = $matches[1];
-        $data = json_decode($jsonData, true);
-
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new ParseException('Failed to decode embedded JSON.');
-        }
-
-        return $this->extractVideoDetailsFromData($data, $url);
-    }
-
-    /**
-     * Extract video details from parsed data.
-     */
-    private function extractVideoDetailsFromData(array $data, string $url): VideoDetails
-    {
-        // Navigate through the data structure to find video information
-        $itemInfo = $data['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct'] ?? null;
-        
-        if (!$itemInfo) {
-            throw new ParseException('Video information not found in the data structure.');
-        }
-
-        // Extract video details
-        $videoId = $itemInfo['id'] ?? '';
-        $desc = $itemInfo['desc'] ?? '';
-        $createTime = $itemInfo['createTime'] ?? 0;
-        
-        // Author information
-        $author = $itemInfo['author'] ?? [];
-        $username = $author['uniqueId'] ?? '';
-        $displayName = $author['nickname'] ?? '';
-        $avatarUrl = $author['avatarThumb'] ?? '';
-
-        // Statistics
-        $stats = $itemInfo['stats'] ?? [];
-        $views = $stats['playCount'] ?? 0;
-        $likes = $stats['diggCount'] ?? 0;
-        $comments = $stats['commentCount'] ?? 0;
-        $shares = $stats['shareCount'] ?? 0;
-
-        // Video information
-        $video = $itemInfo['video'] ?? [];
-        $videoUrl = $video['playAddr'] ?? '';
-        $coverUrl = $video['cover'] ?? '';
-        $duration = $video['duration'] ?? 0;
-
-        // Music information
-        $music = $itemInfo['music'] ?? [];
-        $musicTitle = $music['title'] ?? '';
-        $musicAuthor = $music['authorName'] ?? '';
-
-        if (empty($videoId)) {
-            throw new ParseException('Please enter a valid TikTok URL!');
-        }
-
-        return new VideoDetails(
-            videoId: $videoId,
-            url: $url,
-            title: $desc,
-            description: $desc,
-            username: $username,
-            displayName: $displayName,
-            avatarUrl: $avatarUrl,
-            views: (int) $views,
-            likes: (int) $likes,
-            comments: (int) $comments,
-            shares: (int) $shares,
-            musicTitle: $musicTitle,
-            musicAuthor: $musicAuthor,
-            videoUrl: $videoUrl,
-            coverUrl: $coverUrl,
-            duration: (int) $duration,
-            createdAt: date('c', $createTime)
-        );
-    }
-
-    /**
-     * Cache video details.
-     */
-    private function cacheVideoDetails(string $url, VideoDetails $videoDetails): void
-    {
-        $cacheKey = $this->getCacheKey($url);
-        $ttl = $this->config['cache']['ttl'] ?? 3600;
-        
-        $this->cache->put($cacheKey, $videoDetails->toArray(), $ttl);
-    }
-
-    /**
-     * Generate cache key for URL.
-     */
-    private function getCacheKey(string $url): string
-    {
-        $prefix = $this->config['cache']['prefix'] ?? 'tiktok_scraper';
-        return $prefix . ':' . md5($url);
-    }
-
-    /**
-     * Check if requests are rate limited.
-     */
-    private function isRateLimited(): bool
-    {
-        if (!$this->config['rate_limiting']['enabled']) {
-            return false;
-        }
-
-        $key = 'tiktok_scraper_rate_limit';
-        $maxAttempts = $this->config['rate_limiting']['max_attempts'] ?? 60;
-        
-        return RateLimiter::tooManyAttempts($key, $maxAttempts);
-    }
-
-    /**
-     * Log a message.
-     */
-    private function log(string $level, string $message, array $context = []): void
-    {
-        if (!$this->config['logging']['enabled'] ?? true) {
+        if (!($this->config['rate_limiting']['enabled'] ?? false)) {
             return;
         }
 
-        $channel = $this->config['logging']['channel'] ?? 'default';
-        Log::channel($channel)->log($level, $message, $context);
+        $key = $this->config['rate_limiting']['prefix'] ?? 'tiktok_scraper_rate_limit';
+        $maxAttempts = (int) ($this->config['rate_limiting']['max_attempts'] ?? 60);
+
+        if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
+            $this->statistics['rate_limit_hits']++;
+            $this->dispatchEvent(new RateLimitHit($context));
+            throw new RateLimitException('Rate limit exceeded. Please try again later.');
+        }
+
+        $decay = (int) ($this->config['rate_limiting']['decay_seconds']
+            ?? (($this->config['rate_limiting']['decay_minutes'] ?? 1) * 60));
+        RateLimiter::hit($key, $decay);
+    }
+
+    private function cacheEnabled(): bool
+    {
+        return (bool) ($this->config['cache']['enabled'] ?? false);
+    }
+
+    private function cacheTtl(): int
+    {
+        return (int) ($this->config['cache']['ttl'] ?? 3600);
+    }
+
+    private function getCacheKey(string $value): string
+    {
+        $prefix = $this->config['cache']['prefix'] ?? 'tiktok_scraper';
+
+        return $prefix . ':' . md5($value);
     }
 
     /**
-     * Dispatch an event.
+     * Map a native scraper exception to the Laravel package exception hierarchy.
+     */
+    private function mapNativeException(NativeTikTokScraperException $e): TikTokScraperException
+    {
+        return match (true) {
+            $e instanceof NativeInvalidUrlException => new InvalidUrlException($e->getMessage(), (int) $e->getCode(), $e),
+            $e instanceof NativeHttpRequestException => new HttpRequestException($e->getMessage(), (int) $e->getCode(), $e),
+            $e instanceof NativeEmptyResponseException => new EmptyResponseException($e->getMessage(), (int) $e->getCode(), $e),
+            $e instanceof NativeParseException => new ParseException($e->getMessage(), (int) $e->getCode(), $e),
+            default => new TikTokScraperException($e->getMessage(), (int) $e->getCode(), $e),
+        };
+    }
+
+    /**
+     * Log a message when logging is enabled.
+     */
+    private function log(string $level, string $message, array $context = []): void
+    {
+        if (!($this->config['logging']['enabled'] ?? false)) {
+            return;
+        }
+
+        $channel = $this->config['logging']['channel'] ?? null;
+
+        if ($channel) {
+            Log::channel($channel)->log($level, $message, $context);
+        } else {
+            Log::log($level, $message, $context);
+        }
+    }
+
+    /**
+     * Dispatch an event when events are enabled.
      */
     private function dispatchEvent(object $event): void
     {
-        if (!$this->config['events']['enabled'] ?? true) {
+        $eventsEnabled = $this->config['events']['enabled']
+            ?? $this->config['events']['dispatch_events']
+            ?? true;
+
+        if (!$eventsEnabled) {
             return;
         }
 

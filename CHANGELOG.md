@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Photo post scraping** - `scrape()` now fully supports TikTok photo (slideshow) posts, returning a `VideoDetails` object just like videos.
+- **User profile scraping** - New `scrapeUser(string $usernameOrUrl)` method returning a `UserInfo` object. Accepts a bare username, `@username`, or a full profile URL.
+- New `UserInfo` data object with helpers (`getProfileUrl()`, `getFormattedFollowers()`, `getFormattedHearts()`).
+- New `isValidUserInput()`, `getCachedUserDetails()`, and `hasCachedResult()` methods on the service/facade.
+- New `UserScraped` event dispatched after a successful profile scrape.
+- New API endpoint `POST /api/tiktok-scraper/user` to scrape a user profile.
+- `VideoDetails::getTotalEngagement()` and `getUserProfileUrl()` helpers.
+- Dedicated `phpunit.xml` plus expanded Unit and Feature test coverage for video, photo, and user flows.
+
 ### Changed
+- **Now delegates to the native [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) v2.1 package** instead of maintaining a separate scraping implementation, keeping parsing logic in a single source of truth.
+- Updated dependencies: requires `haianibrahim/tiktok-scraper ^2.1` and `guzzlehttp/guzzle ^7.8`.
+- `VideoDetails` now mirrors the native data shape (`canonicalUrl`, `videoId`, `description`, `userNickname`, `username`, `userId`, `thumbnail`, `views`, `likes`, `comments`, `shares`, `favorites`).
+- Service exceptions are mapped from the native exception types to the package's own exception classes.
+- `clearCache()` and `clearUrlCache()` now return `void`.
 - **BREAKING CHANGE**: Changed PHP namespace from `HaiIbrahim\LaravelTikTokScraper` to `Hki98\LaravelTikTokScraper`
 - Updated all PHP class namespaces and imports throughout the package
 - Maintained package name as `haianibrahim/tiktok-scraper-laravel` for Composer installation
@@ -55,7 +70,8 @@ If updating from a previous version:
 - `tiktok-scraper:clear-cache` - Cache management
 
 ### API Endpoints
-- `POST /api/tiktok-scraper/scrape` - Scrape single video
+- `POST /api/tiktok-scraper/scrape` - Scrape single video or photo post
+- `POST /api/tiktok-scraper/user` - Scrape user profile
 - `POST /api/tiktok-scraper/bulk-scrape` - Bulk scraping
 - `POST /api/tiktok-scraper/validate` - URL validation
 - `GET /api/tiktok-scraper/stats` - Statistics
@@ -63,17 +79,18 @@ If updating from a previous version:
 - `GET /api/tiktok-scraper/health` - Health check
 
 ### Events
-- `VideoScraped` - Fired when video is successfully scraped
+- `VideoScraped` - Fired when a video or photo post is successfully scraped
+- `UserScraped` - Fired when a user profile is successfully scraped
 - `ScrapingFailed` - Fired when scraping fails
 - `RateLimitHit` - Fired when rate limit is exceeded
 
 ### Exceptions
 - `TikTokScraperException` - Base exception
-- `InvalidUrlException` - Invalid URL provided
-- `HttpException` - HTTP request failures
+- `InvalidUrlException` - Invalid URL or user input provided
+- `HttpRequestException` - HTTP request failures
+- `EmptyResponseException` - Empty responses from TikTok
 - `ParseException` - Data parsing failures
 - `RateLimitException` - Rate limit exceeded
-- `CacheException` - Cache operation failures
 
 ## [1.0.0] - 2024-01-01
 
