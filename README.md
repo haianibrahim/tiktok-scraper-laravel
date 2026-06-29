@@ -4,7 +4,7 @@ A Laravel package that provides an easy way to scrape TikTok video, photo post, 
 
 ## Features
 
-- 🚀 **Laravel 11 & 12 Compatible** - Built for modern Laravel versions
+- 🚀 **Laravel 11, 12 & 13 Compatible** - Built for modern Laravel versions
 - 🎬 **Video Scraping** - Extract metadata and engagement stats from video URLs
 - 🖼️ **Photo Post Scraping** - Full support for TikTok photo (slideshow) posts
 - 👤 **User Profile Scraping** - Fetch profile details from a username or profile URL
@@ -463,9 +463,8 @@ composer test-coverage
 ## Requirements
 
 - PHP 8.2 or higher
-- Laravel 11.0 or 12.0
+- Laravel 11.0, 12.0, or 13.0
 - GuzzleHTTP 7.8 or higher
-- [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) 2.1 or higher (installed automatically)
 
 ## Contributing
 

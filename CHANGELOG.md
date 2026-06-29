@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Standalone Package Implementation**: Removed composer dependency on `haianibrahim/tiktok-scraper`. Ported all core scraping, HTTP requesting, embedded JSON parsing, and normalization logic directly into the package.
+- **Laravel 13 Support**: Extended Laravel framework, Illuminate component, and Orchestra Testbench support to include Laravel 13.
 - **Photo post scraping** - `scrape()` now fully supports TikTok photo (slideshow) posts, returning a `VideoDetails` object.
 - **User profile scraping** - New `scrapeUser(string $usernameOrUrl)` method returning a `UserInfo` object. Accepts a bare username, `@username`, or a full profile URL.
 - New `UserInfo` data object with helpers (`getProfileUrl()`, `getFormattedFollowers()`, `getFormattedHearts()`).
@@ -20,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Now implemented as a standalone package** instead of maintaining a separate scraper dependency.
-- Updated dependencies: requires `guzzlehttp/guzzle ^7.8`.
+- Updated dependencies: requires `guzzlehttp/guzzle ^7.8` and supports Laravel `^11.0|^12.0|^13.0`.
 - `VideoDetails` now mirrors the native data shape (`canonicalUrl`, `videoId`, `description`, `userNickname`, `username`, `userId`, `thumbnail`, `views`, `likes`, `comments`, `shares`, `favorites`).
 - `clearCache()` and `clearUrlCache()` now return `void`.
 - **BREAKING CHANGE**: Changed PHP namespace from `HaiIbrahim\LaravelTikTokScraper` to `Hki98\LaravelTikTokScraper`
