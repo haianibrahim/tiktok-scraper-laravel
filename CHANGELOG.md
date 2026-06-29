@@ -5,10 +5,11 @@ All notable changes to `tiktok-scraper-laravel` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.2.0] - 2026-06-29
 
 ### Added
-- **Photo post scraping** - `scrape()` now fully supports TikTok photo (slideshow) posts, returning a `VideoDetails` object just like videos.
+- **Standalone Package Implementation**: Removed composer dependency on `haianibrahim/tiktok-scraper`. Ported all core scraping, HTTP requesting, embedded JSON parsing, and normalization logic directly into the package.
+- **Photo post scraping** - `scrape()` now fully supports TikTok photo (slideshow) posts, returning a `VideoDetails` object.
 - **User profile scraping** - New `scrapeUser(string $usernameOrUrl)` method returning a `UserInfo` object. Accepts a bare username, `@username`, or a full profile URL.
 - New `UserInfo` data object with helpers (`getProfileUrl()`, `getFormattedFollowers()`, `getFormattedHearts()`).
 - New `isValidUserInput()`, `getCachedUserDetails()`, and `hasCachedResult()` methods on the service/facade.
@@ -18,10 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dedicated `phpunit.xml` plus expanded Unit and Feature test coverage for video, photo, and user flows.
 
 ### Changed
-- **Now delegates to the native [haianibrahim/tiktok-scraper](https://github.com/haianibrahim/tiktok-scraper) v2.1 package** instead of maintaining a separate scraping implementation, keeping parsing logic in a single source of truth.
-- Updated dependencies: requires `haianibrahim/tiktok-scraper ^2.1` and `guzzlehttp/guzzle ^7.8`.
+- **Now implemented as a standalone package** instead of maintaining a separate scraper dependency.
+- Updated dependencies: requires `guzzlehttp/guzzle ^7.8`.
 - `VideoDetails` now mirrors the native data shape (`canonicalUrl`, `videoId`, `description`, `userNickname`, `username`, `userId`, `thumbnail`, `views`, `likes`, `comments`, `shares`, `favorites`).
-- Service exceptions are mapped from the native exception types to the package's own exception classes.
 - `clearCache()` and `clearUrlCache()` now return `void`.
 - **BREAKING CHANGE**: Changed PHP namespace from `HaiIbrahim\LaravelTikTokScraper` to `Hki98\LaravelTikTokScraper`
 - Updated all PHP class namespaces and imports throughout the package

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hki98\LaravelTikTokScraper\Services;
 
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 use Hki98\LaravelTikTokScraper\Contracts\TikTokScraperInterface;
 use Hki98\LaravelTikTokScraper\Data\UserInfo;
 use Hki98\LaravelTikTokScraper\Data\VideoDetails;
@@ -18,12 +19,6 @@ use Hki98\LaravelTikTokScraper\Exceptions\InvalidUrlException;
 use Hki98\LaravelTikTokScraper\Exceptions\ParseException;
 use Hki98\LaravelTikTokScraper\Exceptions\RateLimitException;
 use Hki98\LaravelTikTokScraper\Exceptions\TikTokScraperException;
-use Hki98\TikTok\Exception\EmptyResponseException as NativeEmptyResponseException;
-use Hki98\TikTok\Exception\HttpRequestException as NativeHttpRequestException;
-use Hki98\TikTok\Exception\InvalidUrlException as NativeInvalidUrlException;
-use Hki98\TikTok\Exception\ParseException as NativeParseException;
-use Hki98\TikTok\Exception\TikTokScraperException as NativeTikTokScraperException;
-use Hki98\TikTok\TikTokScraper as NativeScraper;
 use Illuminate\Cache\CacheManager;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Facades\Event;
@@ -32,9 +27,10 @@ use Illuminate\Support\Facades\RateLimiter;
 
 class TikTokScraperService implements TikTokScraperInterface
 {
+    private const REHYDRATION_SCRIPT_ID = '__UNIVERSAL_DATA_FOR_REHYDRATION__';
+
     private CacheRepository $cache;
     private array $config;
-    private NativeScraper $scraper;
     private array $statistics = [
         'total_requests' => 0,
         'successful_scrapes' => 0,
@@ -50,7 +46,6 @@ class TikTokScraperService implements TikTokScraperInterface
     ) {
         $this->config = $config;
         $this->cache = $cacheManager->store($config['cache']['store'] ?? null);
-        $this->scraper = new NativeScraper($this->httpClient);
     }
 
     /**
@@ -62,7 +57,7 @@ class TikTokScraperService implements TikTokScraperInterface
 
         if (!$this->isValidTikTokUrl($url)) {
             $this->statistics['failed_scrapes']++;
-            throw new InvalidUrlException("Invalid TikTok URL: {$url}");
+            throw InvalidUrlException::forUrl($url);
         }
 
         $this->guardRateLimit($url);
@@ -76,8 +71,12 @@ class TikTokScraperService implements TikTokScraperInterface
         }
 
         try {
-            $native = $this->scraper->scrape($url);
-            $details = VideoDetails::fromArray($native->toArray());
+            $this->assertTikTokUrl($url);
+            $html = $this->fetchHtml($url);
+            $json = $this->extractEmbeddedJson($html);
+            $data = $this->normalizeData($json);
+
+            $details = VideoDetails::fromArray($data);
 
             if ($this->cacheEnabled()) {
                 $this->cache->put($this->getCacheKey($url), $details->toArray(), $this->cacheTtl());
@@ -92,17 +91,16 @@ class TikTokScraperService implements TikTokScraperInterface
             ]);
 
             return $details;
-        } catch (NativeTikTokScraperException $e) {
+        } catch (TikTokScraperException $e) {
             $this->statistics['failed_scrapes']++;
-            $mapped = $this->mapNativeException($e);
-            $this->dispatchEvent(new ScrapingFailed($url, $mapped));
+            $this->dispatchEvent(new ScrapingFailed($url, $e));
             $this->log('error', 'Scraping failed', [
                 'url' => $url,
-                'error' => $mapped->getMessage(),
-                'exception' => get_class($mapped),
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
             ]);
 
-            throw $mapped;
+            throw $e;
         }
     }
 
@@ -115,7 +113,7 @@ class TikTokScraperService implements TikTokScraperInterface
 
         if (!$this->isValidUserInput($usernameOrUrl)) {
             $this->statistics['failed_scrapes']++;
-            throw new InvalidUrlException("Invalid TikTok username or profile URL: {$usernameOrUrl}");
+            throw InvalidUrlException::forUrl($usernameOrUrl);
         }
 
         $this->guardRateLimit($usernameOrUrl);
@@ -131,8 +129,10 @@ class TikTokScraperService implements TikTokScraperInterface
         }
 
         try {
-            $native = $this->scraper->scrapeUser($usernameOrUrl);
-            $info = UserInfo::fromArray($native->toArray());
+            $url = $this->buildUserUrl($usernameOrUrl);
+            $html = $this->fetchHtml($url);
+            $json = $this->extractEmbeddedJson($html);
+            $info = $this->normalizeUserData($json);
 
             if ($this->cacheEnabled()) {
                 $this->cache->put($cacheKey, $info->toArray(), $this->cacheTtl());
@@ -147,17 +147,16 @@ class TikTokScraperService implements TikTokScraperInterface
             ]);
 
             return $info;
-        } catch (NativeTikTokScraperException $e) {
+        } catch (TikTokScraperException $e) {
             $this->statistics['failed_scrapes']++;
-            $mapped = $this->mapNativeException($e);
-            $this->dispatchEvent(new ScrapingFailed($usernameOrUrl, $mapped));
+            $this->dispatchEvent(new ScrapingFailed($usernameOrUrl, $e));
             $this->log('error', 'User scraping failed', [
                 'input' => $usernameOrUrl,
-                'error' => $mapped->getMessage(),
-                'exception' => get_class($mapped),
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
             ]);
 
-            throw $mapped;
+            throw $e;
         }
     }
 
@@ -359,20 +358,6 @@ class TikTokScraperService implements TikTokScraperInterface
     }
 
     /**
-     * Map a native scraper exception to the Laravel package exception hierarchy.
-     */
-    private function mapNativeException(NativeTikTokScraperException $e): TikTokScraperException
-    {
-        return match (true) {
-            $e instanceof NativeInvalidUrlException => new InvalidUrlException($e->getMessage(), (int) $e->getCode(), $e),
-            $e instanceof NativeHttpRequestException => new HttpRequestException($e->getMessage(), (int) $e->getCode(), $e),
-            $e instanceof NativeEmptyResponseException => new EmptyResponseException($e->getMessage(), (int) $e->getCode(), $e),
-            $e instanceof NativeParseException => new ParseException($e->getMessage(), (int) $e->getCode(), $e),
-            default => new TikTokScraperException($e->getMessage(), (int) $e->getCode(), $e),
-        };
-    }
-
-    /**
      * Log a message when logging is enabled.
      */
     private function log(string $level, string $message, array $context = []): void
@@ -404,5 +389,316 @@ class TikTokScraperService implements TikTokScraperInterface
         }
 
         Event::dispatch($event);
+    }
+
+    /* =========================================================================
+       Ported Core Scraper Engine Methods
+       ========================================================================= */
+
+    private function assertTikTokUrl(string $url): void
+    {
+        if (!preg_match('#^https?://([\w.-]+\.)?tiktok\.com/.*#i', $url)) {
+            throw InvalidUrlException::forUrl($url);
+        }
+
+        if (preg_match('#^https?://(www\.)?tiktok\.com/?$#i', $url)) {
+            throw InvalidUrlException::forUrl($url);
+        }
+    }
+
+    private function fetchHtml(string $url): string
+    {
+        try {
+            $res = $this->httpClient->request('GET', $url, [
+                'headers' => [
+                    'User-Agent' => $this->userAgent(),
+                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                    'Accept-Encoding' => 'gzip, deflate',
+                    'Accept-Language' => 'en-US,en;q=0.9',
+                    'Cache-Control' => 'no-cache',
+                    'Pragma' => 'no-cache',
+                ],
+                'allow_redirects' => [
+                    'max' => 10,
+                    'strict' => false,
+                    'referer' => true,
+                    'track_redirects' => true
+                ],
+                'decode_content' => true,
+            ]);
+        } catch (GuzzleException $e) {
+            throw HttpRequestException::from($e);
+        }
+
+        $body = (string) $res->getBody();
+        if ($body === '') {
+            throw EmptyResponseException::create();
+        }
+        return $body;
+    }
+
+    private function extractEmbeddedJson(string $html): array
+    {
+        $pattern = '/<script[^>]*id="' . preg_quote(self::REHYDRATION_SCRIPT_ID, '/') . '"[^>]*>(.*?)<\/script>/si';
+        if (!preg_match($pattern, $html, $m)) {
+            throw ParseException::unableToLocateData();
+        }
+
+        $jsonRaw = html_entity_decode(trim($m[1]));
+        $decoded = json_decode($jsonRaw, true);
+        if (!is_array($decoded)) {
+            throw ParseException::jsonDecode();
+        }
+        return $decoded;
+    }
+
+    private function normalizeData(array $decoded): array
+    {
+        $flatNodes = [];
+        $this->flattenArray($decoded, $flatNodes);
+
+        $canonical = $this->findFirstMatch($flatNodes, function($node) {
+            return is_string($node) && preg_match('~https?://www\.tiktok\.com/@[^/]*/(video|photo)/\d+~i', $node);
+        });
+
+        $item = $this->findFirstMatch($flatNodes, function($node) {
+            return is_array($node) && (
+                (isset($node['imagePost']) || isset($node['video'])) &&
+                isset($node['author']) &&
+                isset($node['stats'])
+            );
+        });
+
+        if (!is_array($item)) {
+            $item = $this->findFirstMatch($flatNodes, function($node) {
+                return is_array($node) && isset($node['itemStruct']);
+            });
+            if (is_array($item) && isset($item['itemStruct'])) {
+                $item = $item['itemStruct'];
+            }
+        }
+
+        if (!is_array($item)) {
+            foreach ($decoded as $object) {
+                if (!is_array($object)) {
+                    continue;
+                }
+
+                $canonical = $canonical ?? ($object['seo.abtest']['canonical'] ?? '');
+
+                $item = $object['webapp.video-detail']['itemInfo']['itemStruct'] ?? null;
+                if (!is_array($item)) {
+                    $item = $object['webapp.photo-detail']['itemInfo']['itemStruct'] ?? null;
+                }
+                if (!is_array($item)) {
+                    $item = $object['itemInfo']['itemStruct'] ?? null;
+                }
+
+                if (is_array($item)) {
+                    break;
+                }
+            }
+        }
+
+        if (!is_array($item) && is_string($canonical) && $canonical !== '') {
+            return $this->extractMinimalPhotoData($canonical);
+        }
+
+        if (!is_array($item)) {
+            throw ParseException::invalidStructure();
+        }
+
+        $videoId = (string)($item['id'] ?? '');
+        $author = $item['author'] ?? [];
+        $stats = $item['stats'] ?? [];
+
+        $username = (string)($author['uniqueId'] ?? '');
+        $userId = (string)($author['id'] ?? '');
+
+        if ($videoId !== '' && $userId !== '' && $username !== '') {
+            $thumbnail = '';
+            
+            if (isset($item['imagePost']['images']) && is_array($item['imagePost']['images'])) {
+                $firstImage = $item['imagePost']['images'][0] ?? null;
+                if (is_array($firstImage)) {
+                    $thumbnail = $this->extractFirstUrl($firstImage['imageURL'] ?? $firstImage['displayImage'] ?? null);
+                }
+            } else {
+                $video = $item['video'] ?? [];
+                $thumbnail = (string)($video['dynamicCover'] ?? $video['cover'] ?? '');
+            }
+
+            return [
+                'canonical' => (string)($canonical ?? ''),
+                'videoId' => $videoId,
+                'description' => (string)($item['desc'] ?? ''),
+                'user' => (string)($author['nickname'] ?? ''),
+                'username' => $username,
+                'userId' => $userId,
+                'thumbnail' => $thumbnail,
+                'views' => (int)($stats['playCount'] ?? 0),
+                'likes' => (int)($stats['diggCount'] ?? 0),
+                'comments' => (int)($stats['commentCount'] ?? 0),
+                'shares' => (int)($stats['shareCount'] ?? 0),
+                'favorites' => (int)($stats['collectCount'] ?? 0),
+            ];
+        }
+
+        throw ParseException::invalidStructure();
+    }
+
+    private function normalizeUserData(array $decoded): UserInfo
+    {
+        $scope = $decoded['__DEFAULT_SCOPE__'] ?? $decoded;
+        if (!is_array($scope)) {
+            throw ParseException::invalidStructure();
+        }
+
+        $userInfo = $scope['webapp.user-detail']['userInfo'] ?? null;
+
+        if (!is_array($userInfo)) {
+            $flat = [];
+            $this->flattenArray($decoded, $flat);
+            $userInfo = $this->findFirstMatch($flat, function ($node) {
+                return is_array($node)
+                    && isset($node['user']) && is_array($node['user'])
+                    && isset($node['user']['secUid'])
+                    && isset($node['stats']) && is_array($node['stats']);
+            });
+        }
+
+        if (!is_array($userInfo) || !isset($userInfo['user']) || !is_array($userInfo['user'])) {
+            throw ParseException::invalidStructure();
+        }
+
+        $user = $userInfo['user'];
+        $stats = is_array($userInfo['stats'] ?? null) ? $userInfo['stats'] : [];
+        $shareMeta = is_array($userInfo['shareMeta'] ?? null) ? $userInfo['shareMeta'] : [];
+
+        $username = (string)($user['uniqueId'] ?? '');
+        $userId = (string)($user['id'] ?? '');
+        $secUid = (string)($user['secUid'] ?? '');
+
+        if ($username === '' || $userId === '' || $secUid === '') {
+            throw ParseException::invalidStructure();
+        }
+
+        return new UserInfo(
+            userId: $userId,
+            secUid: $secUid,
+            username: $username,
+            nickname: (string)($user['nickname'] ?? ''),
+            signature: (string)($user['signature'] ?? ''),
+            avatarThumb: (string)($user['avatarThumb'] ?? ''),
+            avatarMedium: (string)($user['avatarMedium'] ?? ''),
+            avatarLarger: (string)($user['avatarLarger'] ?? ''),
+            verified: (bool)($user['verified'] ?? false),
+            privateAccount: (bool)($user['privateAccount'] ?? false),
+            createTime: (int)($user['createTime'] ?? 0),
+            region: (string)($user['region'] ?? ''),
+            followerCount: (int)($stats['followerCount'] ?? 0),
+            followingCount: (int)($stats['followingCount'] ?? 0),
+            heartCount: (int)($stats['heartCount'] ?? ($stats['heart'] ?? 0)),
+            videoCount: (int)($stats['videoCount'] ?? 0),
+            diggCount: (int)($stats['diggCount'] ?? 0),
+            friendCount: (int)($stats['friendCount'] ?? 0),
+            profileUrl: 'https://www.tiktok.com/@' . $username,
+            shareTitle: (string)($shareMeta['title'] ?? ''),
+            shareDesc: (string)($shareMeta['desc'] ?? ''),
+        );
+    }
+
+    private function extractMinimalPhotoData(string $canonical): array
+    {
+        if (preg_match('~https?://www\.tiktok\.com/@([^/]*)/(video|photo)/(\d+)~i', $canonical, $matches)) {
+            $username = $matches[1];
+            $postId = $matches[3];
+            
+            return [
+                'canonical' => $canonical,
+                'videoId' => $postId,
+                'description' => '',
+                'user' => '',
+                'username' => $username,
+                'userId' => '',
+                'thumbnail' => '',
+                'views' => 0,
+                'likes' => 0,
+                'comments' => 0,
+                'shares' => 0,
+                'favorites' => 0,
+            ];
+        }
+
+        throw ParseException::invalidStructure();
+    }
+
+    private function buildUserUrl(string $usernameOrUrl): string
+    {
+        $value = trim($usernameOrUrl);
+        if ($value === '') {
+            throw InvalidUrlException::forUrl($usernameOrUrl);
+        }
+
+        if (preg_match('~^https?://~i', $value)) {
+            if (!preg_match('~^https?://([\w.-]+\.)?tiktok\.com/@[^/?\#]+/?$~i', $value)) {
+                throw InvalidUrlException::forUrl($usernameOrUrl);
+            }
+            return $value;
+        }
+
+        $username = ltrim($value, '@');
+        if (!preg_match('/^[A-Za-z0-9._]{1,24}$/', $username)) {
+            throw InvalidUrlException::forUrl($usernameOrUrl);
+        }
+
+        return 'https://www.tiktok.com/@' . $username;
+    }
+
+    private function flattenArray($node, array &$output): void
+    {
+        $output[] = $node;
+        if (is_array($node)) {
+            foreach ($node as $value) {
+                $this->flattenArray($value, $output);
+            }
+        }
+    }
+
+    private function findFirstMatch(array $nodes, callable $predicate)
+    {
+        foreach ($nodes as $node) {
+            if ($predicate($node)) {
+                return $node;
+            }
+        }
+        return null;
+    }
+
+    private function extractFirstUrl($value): string
+    {
+        if (is_string($value)) {
+            return $value;
+        }
+        if (is_array($value)) {
+            if (isset($value['urlList']) && is_array($value['urlList'])) {
+                $first = $value['urlList'][0] ?? null;
+                if (is_string($first)) {
+                    return $first;
+                }
+            }
+            $first = reset($value);
+            if (is_string($first)) {
+                return $first;
+            }
+        }
+        return '';
+    }
+
+    private function userAgent(): string
+    {
+        return $this->config['http']['user_agent']
+            ?? $this->config['http_client']['user_agent']
+            ?? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
     }
 }
